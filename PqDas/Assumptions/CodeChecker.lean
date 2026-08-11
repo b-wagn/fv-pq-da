@@ -21,7 +21,7 @@ Soundness is stated in two equivalent forms: a probabilistic one (consumed by
 the security-game analysis) and a counting one (the natural target when
 verifying a concrete instantiation, e.g. a barycentric Reed–Solomon check).
 -/
-import PqDas.ErasureCode
+import PqDas.Assumptions.ErasureCode
 
 open OracleComp ENNReal
 

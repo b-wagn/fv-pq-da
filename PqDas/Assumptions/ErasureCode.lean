@@ -36,6 +36,26 @@ instance decidableMemCode (C : ErasureCode Γ Λ k n) [Fintype Γ] [DecidableEq 
 lemma encode_mem_code (C : ErasureCode Γ Λ k n) (m : Fin k → Γ) :
     C.encode m ∈ C.code := Set.mem_range_self m
 
+/-- A list of position/symbol pairs is *consistent* with the code if some
+codeword agrees with all of them. The winning condition of the code-binding
+game is the negation of this, for the pairs the adversary opened. -/
+def Consistent (C : ErasureCode Γ Λ k n) (openings : List (Fin n × Λ)) : Prop :=
+  ∃ m : Fin k → Γ, ∀ p ∈ openings, C.encode m p.1 = p.2
+
+/-- Consistency is decidable for finite alphabets. -/
+instance decidableConsistent (C : ErasureCode Γ Λ k n) [Fintype Γ] [DecidableEq Λ]
+    (openings : List (Fin n × Λ)) : Decidable (C.Consistent openings) :=
+  decidable_of_iff (∃ m : Fin k → Γ, ∀ p ∈ openings, C.encode m p.1 = p.2) Iff.rfl
+
+lemma consistent_iff_exists_codeword (C : ErasureCode Γ Λ k n)
+    (openings : List (Fin n × Λ)) :
+    C.Consistent openings ↔ ∃ c ∈ C.code, ∀ p ∈ openings, c p.1 = p.2 := by
+  constructor
+  · rintro ⟨m, hm⟩
+    exact ⟨C.encode m, C.encode_mem_code m, hm⟩
+  · rintro ⟨c, ⟨m, rfl⟩, hc⟩
+    exact ⟨m, hc⟩
+
 end ErasureCode
 
 end PqDas
