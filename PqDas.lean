@@ -2,5 +2,9 @@ import PqDas.Assumptions.ErasureCode
 import PqDas.Assumptions.VectorCommitment
 import PqDas.Assumptions.CodeChecker
 import PqDas.Assumptions.Nark
+import PqDas.RomRuntime
 import PqDas.Target.ErasureCodeCommitment
 import PqDas.Target.Scheme
+import PqDas.Proof.CommittedSoundness
+import PqDas.Proof.PositionBinding
+import PqDas.Proof.CodeBinding

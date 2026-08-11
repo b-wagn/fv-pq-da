@@ -29,7 +29,7 @@ reduction.
 
 The construction is written generically over an ambient monad `m` providing
 uniform sampling and the random oracle, following the conventions of VCVio's
-`FiatShamir`. The random-oracle semantics is fixed by `schemeRuntime`: a fresh
+`FiatShamir`. The random-oracle semantics is fixed by `roRuntime`: a fresh
 lazily-sampled random oracle whose cache is threaded through the whole
 experiment (adversary and scheme algorithms alike).
 -/
@@ -38,12 +38,8 @@ import PqDas.Assumptions.VectorCommitment
 import PqDas.Assumptions.CodeChecker
 import PqDas.Assumptions.Nark
 import PqDas.Target.ErasureCodeCommitment
+import PqDas.RomRuntime
 import VCVio.CryptoFoundations.SignatureAlg
-import VCVio.OracleComp.HasQuery.Morphism
-import VCVio.OracleComp.QueryTracking.RandomOracle.Basic
-import VCVio.OracleComp.QueryTracking.RandomOracle.Simulation
-import VCVio.OracleComp.Coercions.Add
-import VCVio.OracleComp.SimSemantics.StateT.BundledSemantics
 
 open OracleComp OracleSpec ENNReal
 
@@ -90,33 +86,6 @@ def scheme {m : Type → Type} [Monad m] [MonadLiftT ProbComp m]
     let l ← HasQuery.query (spec := (ComVC →ₒ L)) com.1
     return (ps.verify ck.2 (ck.1, com.1, l) com.2 && vc.verify ck.1 com.1 i x τ)
 
-/-! ### Random-oracle semantics -/
-
-section runtime
-
-variable (ComVC L : Type) [DecidableEq ComVC] [SampleableType L]
-
-/-- Runtime bundle for the scheme's random-oracle world, starting from a fixed
-initial cache: random-oracle queries that hit the cache return the cached
-value, misses are answered by fresh uniform sampling and cached. The `cache`
-parameter is the hook for programming the oracle in reductions; the standard
-semantics is `schemeRuntime` (empty initial cache). Mirrors VCVio's
-`FiatShamir.runtimeWithCache`. -/
-noncomputable def schemeRuntimeWithCache (cache : (ComVC →ₒ L).QueryCache) :
-    ProbCompRuntime (OracleComp (unifSpec + (ComVC →ₒ L))) where
-  toSPMFSemantics := SPMFSemantics.withStateOracle
-    (hashImpl := (randomOracle :
-      QueryImpl (ComVC →ₒ L) (StateT ((ComVC →ₒ L).QueryCache) ProbComp)))
-    cache
-  toProbCompLift := ProbCompLift.ofMonadLift _
-
-/-- Runtime bundle for the scheme's random-oracle world: a fresh random oracle
-(empty initial cache). -/
-noncomputable def schemeRuntime : ProbCompRuntime (OracleComp (unifSpec + (ComVC →ₒ L))) :=
-  schemeRuntimeWithCache ComVC L ∅
-
-end runtime
-
 /-! ### Completeness -/
 
 section completeness
@@ -132,7 +101,7 @@ in `commit` (a cache miss, answered by a fresh uniform `l`) and then in
 `verify` (a cache hit, returning the same `l`). The result is a plain
 probabilistic computation in which `l` is sampled uniformly once. -/
 private lemma completeness_evalDist_eq (msg : Fin k → Γ) (i : Fin n) :
-    (schemeRuntime ComVC L).evalDist (do
+    (roRuntime ComVC L).evalDist (do
       let ck ← (scheme (m := OracleComp (unifSpec + (ComVC →ₒ L))) C vc chk ps).setup
       let (com, st) ←
         (scheme (m := OracleComp (unifSpec + (ComVC →ₒ L))) C vc chk ps).commit ck msg
@@ -205,7 +174,7 @@ commitment for `C` under the fresh-random-oracle semantics. -/
 theorem scheme_perfectlyComplete (hvc : vc.PerfectlyComplete)
     (hchk : chk.Complete C) (hps : ps.PerfectlyComplete) :
     (scheme (m := OracleComp (unifSpec + (ComVC →ₒ L))) C vc chk ps).PerfectlyComplete C
-      (schemeRuntime ComVC L) := by
+      (roRuntime ComVC L) := by
   intro msg i
   rw [completeness_evalDist_eq C vc chk ps msg i]
   change Pr[= true | (do
