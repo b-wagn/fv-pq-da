@@ -47,6 +47,14 @@ initial cache). -/
 noncomputable def roRuntime : ProbCompRuntime (OracleComp (unifSpec + (ComVC →ₒ L))) :=
   roRuntimeWithCache ComVC L ∅
 
+/-- The query implementation underlying both `roRuntime` and `simulateRom`:
+uniform-sampling queries are forwarded, random-oracle queries are answered by
+lazy caching. -/
+noncomputable def romImpl :
+    QueryImpl (unifSpec + (ComVC →ₒ L)) (StateT ((ComVC →ₒ L).QueryCache) ProbComp) :=
+  unifFwdImpl (ComVC →ₒ L) + (randomOracle :
+    QueryImpl (ComVC →ₒ L) (StateT ((ComVC →ₒ L).QueryCache) ProbComp))
+
 variable {ComVC L}
 
 /-- Run a computation in the random-oracle world as a plain probabilistic
@@ -54,8 +62,7 @@ computation, lazily simulating the oracle starting from the given cache.
 Reductions use this to simulate the random-oracle world for an adversary. -/
 noncomputable def simulateRomWithCache (cache : (ComVC →ₒ L).QueryCache) {α : Type}
     (oa : OracleComp (unifSpec + (ComVC →ₒ L)) α) : ProbComp α :=
-  (simulateQ (unifFwdImpl (ComVC →ₒ L) + (randomOracle :
-    QueryImpl (ComVC →ₒ L) (StateT ((ComVC →ₒ L).QueryCache) ProbComp))) oa).run' cache
+  (simulateQ (romImpl ComVC L) oa).run' cache
 
 /-- Run a computation in the random-oracle world as a plain probabilistic
 computation, with a fresh random oracle. -/
@@ -73,6 +80,68 @@ lemma evalDist_simulateRomWithCache (cache : (ComVC →ₒ L).QueryCache) {α : 
 /-- Fresh-oracle case of `evalDist_simulateRomWithCache`. -/
 lemma evalDist_simulateRom {α : Type} (oa : OracleComp (unifSpec + (ComVC →ₒ L)) α) :
     𝒟[simulateRom oa] = (roRuntime ComVC L).evalDist oa := rfl
+
+/-- Output probabilities of a plain probabilistic computation are unchanged by
+observing it as a subdistribution first. -/
+@[simp]
+lemma probOutput_evalDist {α : Type} (oa : ProbComp α) (a : α) :
+    Pr[= a | 𝒟[oa]] = Pr[= a | oa] := rfl
+
+/-! ### Compositional simulation lemmas
+
+These decompose `simulateRomWithCache` along the program structure, exposing
+the oracle cache as it threads through: reductions and game-hop proofs use
+them to align a simulated random-oracle computation with an explicitly staged
+probabilistic program. -/
+
+variable {α β : Type}
+
+@[simp]
+lemma simulateRomWithCache_pure (cache : (ComVC →ₒ L).QueryCache) (a : α) :
+    simulateRomWithCache cache (pure a : OracleComp (unifSpec + (ComVC →ₒ L)) α) =
+      pure a := by
+  simp [simulateRomWithCache]
+
+/-- A bind splits into simulating the prefix (keeping its final cache) and
+simulating the continuation from that cache. -/
+lemma simulateRomWithCache_bind (cache : (ComVC →ₒ L).QueryCache)
+    (oa : OracleComp (unifSpec + (ComVC →ₒ L)) α)
+    (f : α → OracleComp (unifSpec + (ComVC →ₒ L)) β) :
+    simulateRomWithCache cache (oa >>= f) =
+      (simulateQ (romImpl ComVC L) oa).run cache >>= fun x =>
+        simulateRomWithCache x.2 (f x.1) := by
+  simp only [simulateRomWithCache, simulateQ_bind, StateT.run'_eq, StateT.run_bind, map_bind]
+
+/-- Binding a plain continuation onto a simulated computation: the simulation
+runs from the given cache and the continuation sees only the value (the final
+cache is discarded). Used to align a reduction (which discards the cache) with
+a game (which threads it, cf. `simulateRomWithCache_bind`). -/
+lemma bind_simulateRomWithCache (cache : (ComVC →ₒ L).QueryCache)
+    (oa : OracleComp (unifSpec + (ComVC →ₒ L)) α) (g : α → ProbComp β) :
+    simulateRomWithCache cache oa >>= g =
+      (simulateQ (romImpl ComVC L) oa).run cache >>= fun x => g x.1 := by
+  simp [simulateRomWithCache, StateT.run'_eq, bind_map_left]
+
+/-- A lifted plain probabilistic computation passes through the simulation
+without touching the cache. -/
+lemma simulateRomWithCache_liftM_bind (cache : (ComVC →ₒ L).QueryCache)
+    (oa : ProbComp α) (f : α → OracleComp (unifSpec + (ComVC →ₒ L)) β) :
+    simulateRomWithCache cache (liftM oa >>= f) =
+      oa >>= fun x => simulateRomWithCache cache (f x) := by
+  simp only [simulateRomWithCache, simulateQ_bind]
+  exact roSim.run'_liftM_bind _ oa _ cache
+
+/-- A random-oracle query is answered by the caching oracle implementation on
+the current cache. -/
+lemma simulateRomWithCache_query_bind (cache : (ComVC →ₒ L).QueryCache)
+    (q : ComVC) (f : L → OracleComp (unifSpec + (ComVC →ₒ L)) β) :
+    simulateRomWithCache cache
+      (HasQuery.query (spec := (ComVC →ₒ L)) q >>= f) =
+      ((randomOracle : QueryImpl (ComVC →ₒ L)
+          (StateT ((ComVC →ₒ L).QueryCache) ProbComp)) q).run cache >>= fun x =>
+        simulateRomWithCache x.2 (f x.1) := by
+  simp only [simulateRomWithCache, romImpl, simulateQ_bind,
+    roSim.simulateQ_HasQuery_query, StateT.run'_eq, StateT.run_bind, map_bind]
 
 end runtime
 

@@ -44,6 +44,35 @@ theorem scheme_positionBinding [DecidableEq Λ] [DecidableEq ComVC] [SampleableT
     Pr[= true | (scheme (m := OracleComp (unifSpec + (ComVC →ₒ L)))
         C vc chk ps).posBindingExp (roRuntime ComVC L) A] ≤
       Pr[= true | vc.posBindingExp (posBindingReduction ps A)] := by
-  sorry
+  unfold ErasureCodeCommitment.posBindingExp VectorCommitment.posBindingExp
+    posBindingReduction
+  rw [← evalDist_simulateRom, probOutput_evalDist]
+  dsimp only [scheme]
+  simp only [monad_norm, simulateRom]
+  -- Peel the two lifted setup samplings on both sides.
+  rw [simulateRomWithCache_liftM_bind]
+  refine probOutput_bind_mono fun ckVC _ => ?_
+  rw [simulateRomWithCache_liftM_bind]
+  refine probOutput_bind_mono fun crs _ => ?_
+  -- Split off the adversary's simulated run on both sides: the game threads
+  -- the adversary's final oracle cache into verification, the reduction
+  -- discards it.
+  rw [simulateRomWithCache_bind, bind_simulateRomWithCache]
+  refine probOutput_bind_mono fun out _ => ?_
+  obtain ⟨⟨com, i, x, τ, x', τ'⟩, cache⟩ := out
+  -- Evaluate the two verification queries; their answers `l`, `l'` are
+  -- irrelevant to the vector-commitment part of the win condition.
+  simp only [monad_norm, simulateRomWithCache_query_bind, simulateRomWithCache_pure]
+  by_cases hwin : (decide (x ≠ x') && vc.verify ckVC com.1 i x τ
+      && vc.verify ckVC com.1 i x' τ') = true
+  · exact hwin ▸ le_of_le_of_eq probOutput_le_one (probOutput_pure_self _).symm
+  · refine le_trans (le_of_eq (probOutput_eq_zero_of_not_mem_support ?_)) zero_le
+    intro hmem
+    rw [mem_support_bind_iff] at hmem
+    obtain ⟨y, _, hmem⟩ := hmem
+    rw [mem_support_bind_iff] at hmem
+    obtain ⟨y', _, hmem⟩ := hmem
+    simp only [support_pure, Set.mem_singleton_iff] at hmem
+    grind
 
 end PqDas
