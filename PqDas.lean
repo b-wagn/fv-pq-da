@@ -3,8 +3,14 @@ import PqDas.Assumptions.VectorCommitment
 import PqDas.Assumptions.CodeChecker
 import PqDas.Assumptions.Nark
 import PqDas.RomRuntime
+import PqDas.VcvioExtras
 import PqDas.Target.ErasureCodeCommitment
 import PqDas.Target.Scheme
-import PqDas.Proof.CommittedSoundness
+import PqDas.Proof.CommittedSoundness.Defs
+import PqDas.Proof.CommittedSoundness.Fork
+import PqDas.Proof.CommittedSoundness.Bridge
+import PqDas.Proof.CommittedSoundness.Coupling
+import PqDas.Proof.CommittedSoundness.Lockstep
+import PqDas.Proof.CommittedSoundness.ForkingBound
 import PqDas.Proof.PositionBinding
 import PqDas.Proof.CodeBinding

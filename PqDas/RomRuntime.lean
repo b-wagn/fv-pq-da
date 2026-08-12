@@ -122,6 +122,13 @@ lemma bind_simulateRomWithCache (cache : (ComVC →ₒ L).QueryCache)
       (simulateQ (romImpl ComVC L) oa).run cache >>= fun x => g x.1 := by
   simp [simulateRomWithCache, StateT.run'_eq, bind_map_left]
 
+/-- Simulation commutes with mapping a function over the result. -/
+lemma simulateRomWithCache_map (cache : (ComVC →ₒ L).QueryCache)
+    (oa : OracleComp (unifSpec + (ComVC →ₒ L)) α) (f : α → β) :
+    simulateRomWithCache cache (f <$> oa) = f <$> simulateRomWithCache cache oa := by
+  simp only [simulateRomWithCache, simulateQ_map, StateT.run'_eq, StateT.run_map,
+    Functor.map_map]
+
 /-- A lifted plain probabilistic computation passes through the simulation
 without touching the cache. -/
 lemma simulateRomWithCache_liftM_bind (cache : (ComVC →ₒ L).QueryCache)
@@ -142,6 +149,27 @@ lemma simulateRomWithCache_query_bind (cache : (ComVC →ₒ L).QueryCache)
         simulateRomWithCache x.2 (f x.1) := by
   simp only [simulateRomWithCache, romImpl, simulateQ_bind,
     roSim.simulateQ_HasQuery_query, StateT.run'_eq, StateT.run_bind, map_bind]
+
+/-! ### Behaviour of the caching oracle on hits and misses -/
+
+/-- A cache hit returns the recorded answer and leaves the cache unchanged. -/
+lemma randomOracle_run_hit {q : ComVC} {cache : (ComVC →ₒ L).QueryCache} {r : L}
+    (h : cache q = some r) :
+    ((randomOracle : QueryImpl (ComVC →ₒ L)
+        (StateT ((ComVC →ₒ L).QueryCache) ProbComp)) q).run cache = pure (r, cache) := by
+  simp [randomOracle, QueryImpl.withCaching_apply, StateT.run_bind, StateT.run_get, h]
+
+/-- A cache miss samples a fresh uniform answer and records it. -/
+lemma randomOracle_run_miss {q : ComVC} {cache : (ComVC →ₒ L).QueryCache}
+    (h : cache q = none) :
+    ((randomOracle : QueryImpl (ComVC →ₒ L)
+        (StateT ((ComVC →ₒ L).QueryCache) ProbComp)) q).run cache =
+      ($ᵗ L) >>= fun r => pure (r, cache.cacheQuery q r) := by
+  simp only [randomOracle, QueryImpl.withCaching_apply, StateT.run_bind, StateT.run_get,
+    pure_bind, uniformSampleImpl, h, liftM, MonadLiftT.monadLift, MonadLift.monadLift]
+  simp only [StateT.run_lift, StateT.run_modifyGet]
+  rw [bind_assoc]
+  simp only [pure_bind]
 
 end runtime
 

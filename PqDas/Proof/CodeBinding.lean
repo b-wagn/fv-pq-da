@@ -33,7 +33,7 @@ internally where needed), so the union bound is a sum of their winning
 probabilities.
 -/
 import PqDas.Target.Scheme
-import PqDas.Proof.CommittedSoundness
+import PqDas.Proof.CommittedSoundness.Defs
 
 open OracleComp OracleSpec ENNReal
 
@@ -104,6 +104,320 @@ noncomputable def wpbReduction [NeZero n] [DecidableEq Λ] [DecidableEq ComVC]
   | some p => return (c, p.1, p.2.1, p.2.2)
   | none => return (c, 0, c 0, default)
 
+/-! ### Proof of code-binding
+
+All four experiments share a common core: sample the two keys, run the
+adversary in the simulated random-oracle world, and query the oracle once on
+the vector-commitment part of its output commitment (`challengedRun`). Aligned
+on this shared prefix, each experiment's winning condition is a deterministic
+Boolean function of the prefix outcome (`gameWinBit`, `ksWinBit`, `csWinBit`,
+`wpbWinBit`): every random-oracle query made downstream of the prefix hits the
+cache entry pinned by the challenge query, so it returns the same answer and
+leaves the cache unchanged. The game's bit implies one of the reductions' bits
+(`gameWinBit_implies`), so a pointwise union bound over the shared prefix
+(`probOutput_bind_le_add₃`) concludes. -/
+
+section codeBindingProof
+
+set_option linter.unusedSectionVars false
+
+/-- Union bound over a shared prefix: if pointwise on the support the first
+continuation's success probability is bounded by the sum of the other three
+continuations' success probabilities, the same holds after composing all four
+with the shared prefix. -/
+private lemma probOutput_bind_le_add₃ {α : Type} (oa : ProbComp α)
+    (f g₁ g₂ g₃ : α → ProbComp Bool)
+    (h : ∀ x ∈ support oa, Pr[= true | f x] ≤
+        Pr[= true | g₁ x] + Pr[= true | g₂ x] + Pr[= true | g₃ x]) :
+    Pr[= true | oa >>= f] ≤
+      Pr[= true | oa >>= g₁] + Pr[= true | oa >>= g₂] + Pr[= true | oa >>= g₃] := by
+  simp only [probOutput_bind_eq_tsum]
+  rw [← ENNReal.tsum_add, ← ENNReal.tsum_add]
+  refine ENNReal.tsum_le_tsum fun x => ?_
+  by_cases hx : x ∈ support oa
+  · rw [← mul_add, ← mul_add]
+    exact mul_le_mul_right (h x hx) _
+  · simp [probOutput_eq_zero_of_not_mem_support hx]
+
+/-- Three-way Boolean union bound for `pure` computations. -/
+private lemma probOutput_pure_bool_le_or₃ (win b₁ b₂ b₃ : Bool)
+    (h : win = true → b₁ = true ∨ b₂ = true ∨ b₃ = true) :
+    Pr[= true | (pure win : ProbComp Bool)] ≤
+      Pr[= true | (pure b₁ : ProbComp Bool)] + Pr[= true | (pure b₂ : ProbComp Bool)] +
+        Pr[= true | (pure b₃ : ProbComp Bool)] := by
+  cases win <;> cases b₁ <;> cases b₂ <;> cases b₃ <;> simp_all
+
+/-- Simulating a `mapM` whose every step queries the oracle at the same point
+`q`, starting from a cache that already answers `q` with `l`: every query is a
+cache hit, so the verdicts are computed by a plain `map` at answer `l` and the
+cache is unchanged. -/
+private lemma simulateRomWithCache_mapM_query_hit [DecidableEq ComVC] [SampleableType L]
+    {α β : Type} {q : ComVC} {cache : (ComVC →ₒ L).QueryCache} {l : L}
+    (h : cache q = some l) (g : α → L → Bool) (xs : List α)
+    (k : List Bool → OracleComp (unifSpec + (ComVC →ₒ L)) β) :
+    simulateRomWithCache cache
+        (xs.mapM (fun p => HasQuery.query (spec := (ComVC →ₒ L)) q >>=
+          fun l' => pure (g p l')) >>= k) =
+      simulateRomWithCache cache (k (xs.map fun p => g p l)) := by
+  induction xs generalizing k with
+  | nil => rw [List.mapM_nil, pure_bind, List.map_nil]
+  | cons p ps ih =>
+      rw [List.mapM_cons, List.map_cons]
+      simp only [bind_assoc, pure_bind]
+      rw [simulateRomWithCache_query_bind, randomOracle_run_hit h, pure_bind]
+      exact ih _
+
+variable [Nonempty Γ] [Fintype Γ] [DecidableEq Λ] [DecidableEq ComVC] [SampleableType L]
+  [NeZero n] [Inhabited Opn]
+  (C : ErasureCode Γ Λ k n) (vc : VectorCommitment Λ n CkVC ComVC Opn)
+  (chk : CodeChecker Λ n L)
+  (ps : Nark (CkVC × ComVC × L) (Fin n → Λ) Crs Proof (schemeRel vc chk))
+  (ext : Nark.Extractor (CkVC × ComVC × L) (Fin n → Λ) Crs Proof)
+  (A : ErasureCodeCommitment.CodeBindingAdv (OracleComp (unifSpec + (ComVC →ₒ L)))
+    Λ n (CkVC × Crs) (ComVC × Proof) Opn)
+
+/-- The prefix shared by all four experiments, with the challenge query
+appended: sample both keys, run the adversary in the simulated random-oracle
+world, then query the oracle once on the vector-commitment part of its output
+commitment (a cache hit if the adversary already queried it). -/
+private noncomputable def challengedRun :
+    ProbComp (CkVC × Crs × ((ComVC × Proof) × List (Fin n × Λ × Opn)) × L) := do
+  let ckVC ← vc.setup
+  let crs ← ps.setup
+  let z ← (simulateQ (romImpl ComVC L) (A (ckVC, crs))).run ∅
+  let x ← ((randomOracle : QueryImpl (ComVC →ₒ L)
+      (StateT ((ComVC →ₒ L).QueryCache) ProbComp)) z.1.1.1).run z.2
+  return (ckVC, crs, z.1, x.1)
+
+/-- The code-binding game's winning bit as a function of the shared prefix
+outcome: all openings verify (each verification's oracle query returns the
+pinned challenge) and no codeword is consistent with the opened symbols. -/
+private def gameWinBit (ckVC : CkVC) (crs : Crs)
+    (out : (ComVC × Proof) × List (Fin n × Λ × Opn)) (l : L) : Bool :=
+  ((out.2.map fun p => ps.verify crs (ckVC, out.1.1, l) out.1.2 &&
+      vc.verify ckVC out.1.1 p.1 p.2.1 p.2.2).all id) &&
+    !decide (C.Consistent (out.2.map fun p => (p.1, p.2.1)))
+
+/-- The knowledge-soundness reduction's winning bit as a function of the
+shared prefix outcome. -/
+private def ksWinBit (ckVC : CkVC) (crs : Crs)
+    (out : (ComVC × Proof) × List (Fin n × Λ × Opn)) (l : L) : Bool :=
+  ps.verify crs (ckVC, out.1.1, l) out.1.2 &&
+    !schemeRel vc chk (ckVC, out.1.1, l) (ext crs (ckVC, out.1.1, l) out.1.2)
+
+/-- The committed-soundness reduction's winning bit as a function of the
+shared prefix outcome. -/
+private def csWinBit (ckVC : CkVC) (crs : Crs)
+    (out : (ComVC × Proof) × List (Fin n × Λ × Opn)) (l : L) : Bool :=
+  decide (ext crs (ckVC, out.1.1, l) out.1.2 ∉ C.code) &&
+    chk.check l (ext crs (ckVC, out.1.1, l) out.1.2) &&
+    decide (vc.commit ckVC (ext crs (ckVC, out.1.1, l) out.1.2) = out.1.1)
+
+/-- The weak position-binding reduction's winning bit as a function of the
+shared prefix outcome. -/
+private def wpbWinBit (ckVC : CkVC) (crs : Crs)
+    (out : (ComVC × Proof) × List (Fin n × Λ × Opn)) (l : L) : Bool :=
+  match out.2.find? fun p =>
+      decide (p.2.1 ≠ ext crs (ckVC, out.1.1, l) out.1.2 p.1) with
+  | some p => decide (p.2.1 ≠ ext crs (ckVC, out.1.1, l) out.1.2 p.1) &&
+      vc.verify ckVC (vc.commit ckVC (ext crs (ckVC, out.1.1, l) out.1.2))
+        p.1 p.2.1 p.2.2
+  | none => decide (ext crs (ckVC, out.1.1, l) out.1.2 0 ≠
+        ext crs (ckVC, out.1.1, l) out.1.2 0) &&
+      vc.verify ckVC (vc.commit ckVC (ext crs (ckVC, out.1.1, l) out.1.2)) 0
+        (ext crs (ckVC, out.1.1, l) out.1.2 0) default
+
+/-- Pointwise event decomposition: whenever the game's winning bit is set, one
+of the three reductions' winning bits is set. If extraction fails the
+knowledge-soundness bit is set (the game's win includes a verifying proof,
+since consistency of the empty opening list rules out an empty win); if it
+succeeds with a non-codeword the committed-soundness bit is set; if it
+succeeds with a codeword some opened symbol disagrees with it, setting the
+weak position-binding bit. -/
+private lemma gameWinBit_implies (ckVC : CkVC) (crs : Crs)
+    (out : (ComVC × Proof) × List (Fin n × Λ × Opn)) (l : L)
+    (h : gameWinBit C vc chk ps ckVC crs out l = true) :
+    ksWinBit vc chk ps ext ckVC crs out l = true ∨
+      csWinBit C vc chk ext ckVC crs out l = true ∨
+      wpbWinBit vc ext ckVC crs out l = true := by
+  obtain ⟨⟨comVC, π⟩, openings⟩ := out
+  simp only [gameWinBit, Bool.and_eq_true, List.all_eq_true, List.mem_map,
+    Bool.not_eq_true', decide_eq_false_iff_not] at h
+  obtain ⟨hall, hncons⟩ := h
+  have hver : ∀ p ∈ openings, ps.verify crs (ckVC, comVC, l) π = true ∧
+      vc.verify ckVC comVC p.1 p.2.1 p.2.2 = true := by
+    intro p hp
+    have := hall _ ⟨p, hp, rfl⟩
+    simpa [Bool.and_eq_true] using this
+  have hne : openings ≠ [] := by
+    rintro rfl
+    exact hncons ⟨Classical.arbitrary _, by simp⟩
+  obtain ⟨p₀, hp₀⟩ := List.exists_mem_of_ne_nil openings hne
+  have hps : ps.verify crs (ckVC, comVC, l) π = true := (hver p₀ hp₀).1
+  cases hrel : schemeRel vc chk (ckVC, comVC, l) (ext crs (ckVC, comVC, l) π) with
+  | false => exact Or.inl (by simp [ksWinBit, hps, hrel])
+  | true =>
+      rw [schemeRel, Bool.and_eq_true, decide_eq_true_eq] at hrel
+      obtain ⟨hcommit, hchk⟩ := hrel
+      by_cases hcode : ext crs (ckVC, comVC, l) π ∈ C.code
+      · refine Or.inr (Or.inr ?_)
+        have hbad : ∃ p ∈ openings, p.2.1 ≠ ext crs (ckVC, comVC, l) π p.1 := by
+          by_contra hno
+          push Not at hno
+          obtain ⟨m, hm⟩ := hcode
+          refine hncons ⟨m, fun pr hpr => ?_⟩
+          obtain ⟨p, hp, rfl⟩ := List.mem_map.mp hpr
+          rw [hm]
+          exact (hno p hp).symm
+        have hfind : (openings.find? fun p =>
+            decide (p.2.1 ≠ ext crs (ckVC, comVC, l) π p.1)).isSome := by
+          rw [List.find?_isSome]
+          obtain ⟨p, hp, hne'⟩ := hbad
+          exact ⟨p, hp, decide_eq_true hne'⟩
+        obtain ⟨p₁, hfind⟩ := Option.isSome_iff_exists.mp hfind
+        have hpred := List.find?_some hfind
+        have hv : vc.verify ckVC comVC p₁.1 p₁.2.1 p₁.2.2 = true :=
+          (hver p₁ (List.mem_of_find?_eq_some hfind)).2
+        simp only [wpbWinBit, hfind]
+        rw [hcommit]
+        simp [hpred, hv]
+      · exact Or.inr (Or.inl (by simp [csWinBit, hcode, hchk, hcommit]))
+
+/-- Alignment of the code-binding game with the challenged shared prefix. If
+the adversary opens nothing the game cannot win (the empty list is
+consistent); otherwise the game's first verification query is the challenge
+query, and all further verification queries are cache hits. -/
+private lemma game_le_challengedRun :
+    Pr[= true | (scheme (m := OracleComp (unifSpec + (ComVC →ₒ L)))
+        C vc chk ps).codeBindingExp C (roRuntime ComVC L) A] ≤
+      Pr[= true | challengedRun vc chk ps A >>= fun w =>
+        pure (gameWinBit C vc chk ps w.1 w.2.1 w.2.2.1 w.2.2.2)] := by
+  unfold ErasureCodeCommitment.codeBindingExp challengedRun
+  rw [← evalDist_simulateRom, probOutput_evalDist]
+  dsimp only [scheme]
+  simp only [monad_norm, simulateRom]
+  rw [simulateRomWithCache_liftM_bind]
+  refine probOutput_bind_mono fun ckVC _ => ?_
+  rw [simulateRomWithCache_liftM_bind]
+  refine probOutput_bind_mono fun crs _ => ?_
+  rw [simulateRomWithCache_bind]
+  refine probOutput_bind_mono fun z _ => ?_
+  obtain ⟨⟨⟨comVC, π⟩, openings⟩, cache₁⟩ := z
+  simp only [monad_norm]
+  rcases openings with _ | ⟨p₀, rest⟩
+  · have hcons : C.Consistent [] := ⟨Classical.arbitrary _, by simp⟩
+    refine le_trans (le_of_eq ?_) zero_le
+    simp [hcons]
+  · cases hc : cache₁ comVC with
+    | some l₀ =>
+        rw [randomOracle_run_hit hc, pure_bind]
+        rw [simulateRomWithCache_mapM_query_hit hc, simulateRomWithCache_pure]
+        simp [gameWinBit]
+    | none =>
+        rw [List.mapM_cons]
+        simp only [bind_assoc, pure_bind]
+        rw [simulateRomWithCache_query_bind, randomOracle_run_miss hc]
+        simp only [bind_assoc, pure_bind]
+        refine probOutput_bind_mono fun r _ => ?_
+        rw [simulateRomWithCache_mapM_query_hit (QueryCache.cacheQuery_self cache₁ comVC r),
+          simulateRomWithCache_pure]
+        simp [gameWinBit]
+
+/-- Alignment of the knowledge-soundness experiment with the challenged shared
+prefix (the two key samplings commute). -/
+private lemma challengedRun_ks_le :
+    Pr[= true | challengedRun vc chk ps A >>= fun w =>
+        pure (ksWinBit vc chk ps ext w.1 w.2.1 w.2.2.1 w.2.2.2)] ≤
+      Pr[= true | ps.knowledgeSoundnessExp ext (ksReduction vc A)] := by
+  unfold challengedRun Nark.knowledgeSoundnessExp ksReduction runWithChallenge
+  simp only [monad_norm, simulateRom]
+  refine le_trans (le_of_eq (probOutput_bind_bind_swap vc.setup ps.setup _ true)) ?_
+  refine probOutput_bind_mono fun crs _ => ?_
+  refine probOutput_bind_mono fun ckVC _ => ?_
+  rw [simulateRomWithCache_bind]
+  simp only [bind_assoc]
+  refine probOutput_bind_mono fun z _ => ?_
+  obtain ⟨⟨⟨comVC, π⟩, openings⟩, cache₁⟩ := z
+  simp only [monad_norm]
+  rw [simulateRomWithCache_query_bind]
+  simp only [simulateRomWithCache_pure, bind_assoc, pure_bind]
+  refine probOutput_bind_mono fun x _ => ?_
+  simp [ksWinBit]
+
+/-- Alignment of the non-interactive committed soundness experiment with the
+challenged shared prefix: the reduction's challenge query pins the cache entry
+for the output commitment, so the game's own challenge query is a hit
+returning the same answer. -/
+private lemma challengedRun_cs_le :
+    Pr[= true | challengedRun vc chk ps A >>= fun w =>
+        pure (csWinBit C vc chk ext w.1 w.2.1 w.2.2.1 w.2.2.2)] ≤
+      Pr[= true | niCommittedSoundnessExp C vc chk (csReduction ps ext A)] := by
+  unfold challengedRun niCommittedSoundnessExp csReduction
+  rw [← evalDist_simulateRom, probOutput_evalDist]
+  simp only [monad_norm, simulateRom]
+  simp only [simulateRomWithCache_liftM_bind]
+  refine probOutput_bind_mono fun ckVC _ => ?_
+  refine probOutput_bind_mono fun crs _ => ?_
+  rw [simulateRomWithCache_bind]
+  refine probOutput_bind_mono fun z _ => ?_
+  obtain ⟨⟨⟨comVC, π⟩, openings⟩, cache₁⟩ := z
+  simp only [monad_norm]
+  rw [simulateRomWithCache_query_bind]
+  cases hc : cache₁ comVC with
+  | some l₀ =>
+      rw [randomOracle_run_hit hc]
+      simp only [pure_bind]
+      rw [simulateRomWithCache_query_bind, randomOracle_run_hit hc]
+      simp [csWinBit]
+  | none =>
+      rw [randomOracle_run_miss hc]
+      simp only [bind_assoc, pure_bind]
+      refine probOutput_bind_mono fun r _ => ?_
+      rw [simulateRomWithCache_query_bind,
+        randomOracle_run_hit (QueryCache.cacheQuery_self cache₁ comVC r)]
+      simp [csWinBit]
+
+/-- Alignment of the weak position-binding experiment with the challenged
+shared prefix. -/
+private lemma challengedRun_wpb_le :
+    Pr[= true | challengedRun vc chk ps A >>= fun w =>
+        pure (wpbWinBit vc ext w.1 w.2.1 w.2.2.1 w.2.2.2)] ≤
+      Pr[= true | vc.weakPosBindingExp (wpbReduction ps ext A)] := by
+  unfold challengedRun VectorCommitment.weakPosBindingExp wpbReduction runWithChallenge
+  simp only [monad_norm, simulateRom]
+  refine probOutput_bind_mono fun ckVC _ => ?_
+  refine probOutput_bind_mono fun crs _ => ?_
+  rw [simulateRomWithCache_bind]
+  simp only [bind_assoc]
+  refine probOutput_bind_mono fun z _ => ?_
+  obtain ⟨⟨⟨comVC, π⟩, openings⟩, cache₁⟩ := z
+  simp only [monad_norm]
+  rw [simulateRomWithCache_query_bind]
+  simp only [simulateRomWithCache_pure, bind_assoc, pure_bind]
+  refine probOutput_bind_mono fun x _ => ?_
+  simp only [wpbWinBit, ne_eq, decide_not]
+  cases hfind : openings.find? fun p =>
+      !decide (p.2.1 = ext crs (ckVC, comVC, x.1) π p.1) with
+  | some p₁ => simp
+  | none => simp
+
+/-- Union bound over the challenged shared prefix, via the pointwise event
+decomposition `gameWinBit_implies`. -/
+private lemma challengedRun_split :
+    Pr[= true | challengedRun vc chk ps A >>= fun w =>
+        pure (gameWinBit C vc chk ps w.1 w.2.1 w.2.2.1 w.2.2.2)] ≤
+      Pr[= true | challengedRun vc chk ps A >>= fun w =>
+          pure (ksWinBit vc chk ps ext w.1 w.2.1 w.2.2.1 w.2.2.2)] +
+        Pr[= true | challengedRun vc chk ps A >>= fun w =>
+          pure (csWinBit C vc chk ext w.1 w.2.1 w.2.2.1 w.2.2.2)] +
+        Pr[= true | challengedRun vc chk ps A >>= fun w =>
+          pure (wpbWinBit vc ext w.1 w.2.1 w.2.2.1 w.2.2.2)] :=
+  probOutput_bind_le_add₃ _ _ _ _ _ fun w _ =>
+    probOutput_pure_bool_le_or₃ _ _ _ _
+      (gameWinBit_implies C vc chk ps ext w.1 w.2.1 w.2.2.1 w.2.2.2)
+
+end codeBindingProof
+
 /-- **Code-binding of the scheme**, by reduction to knowledge soundness of the
 argument system, the non-interactive committed soundness game, and weak
 position-binding of the vector commitment, via the three explicit reductions
@@ -126,6 +440,9 @@ theorem scheme_codeBinding [Nonempty Γ] [Fintype Γ] [DecidableEq Λ]
       Pr[= true | ps.knowledgeSoundnessExp ext (ksReduction vc A)] +
       Pr[= true | niCommittedSoundnessExp C vc chk (csReduction ps ext A)] +
       Pr[= true | vc.weakPosBindingExp (wpbReduction ps ext A)] := by
-  sorry
+  refine le_trans (game_le_challengedRun C vc chk ps A) ?_
+  refine le_trans (challengedRun_split C vc chk ps ext A) ?_
+  exact add_le_add (add_le_add (challengedRun_ks_le vc chk ps ext A)
+    (challengedRun_cs_le C vc chk ps ext A)) (challengedRun_wpb_le vc chk ps ext A)
 
 end PqDas
