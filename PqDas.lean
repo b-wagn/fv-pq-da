@@ -14,3 +14,4 @@ import PqDas.Proof.CommittedSoundness.Lockstep
 import PqDas.Proof.CommittedSoundness.ForkingBound
 import PqDas.Proof.PositionBinding
 import PqDas.Proof.CodeBinding
+import PqDas.Proof.CorollaryCodeBinding
