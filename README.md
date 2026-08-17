@@ -1,6 +1,6 @@
 # Formally Verified Security of Post-Quantum DAS
 
-Proving security of the PQ DAS scheme from [this post](https://ethresear.ch/t/leanda-design-and-benchmark/25642) in Lean4. Code comments refer to the [Foundations paper](https://eprint.iacr.org/2023/1079.pdf) from time to time.
+Proving security of the PQ DAS scheme from [this post](https://ethresear.ch/t/leanda-design-and-benchmark/25642) in Lean4. Code comments and README refer to the [Foundations paper](https://eprint.iacr.org/2023/1079.pdf) from time to time.
 
 More details and explanation can be found here: TBD
 
@@ -24,7 +24,7 @@ Toolchain: Lean `v4.32.2`, mathlib `v4.32.2`, VCVio pinned in
 | Vector commitment, deterministic commit/open | `VectorCommitment` (`Assumptions/VectorCommitment.lean`) | `PerfectlyComplete`, `posBindingExp` (position-binding) | Foundations Defs 15, 16 |
 | Code checker (probabilistic membership check) | `CodeChecker` (`Assumptions/CodeChecker.lean`) | `Complete`, `Sound` (`δ`-soundness; counting form `sound_iff_card_le`) | new primitive |
 | Non-interactive argument of knowledge, straightline extractor | `Nark` (`Assumptions/Nark.lean`) | `PerfectlyComplete`, `knowledgeSoundnessExp` | Foundations Defs 17, 18 |
-| Random oracle | `RomRuntime.lean` (`roRuntime`: lazily sampled, cache shared between adversary and scheme) | — | — |
+| Random oracle | `roRuntime` (`RomRuntime.lean`) | — | — |
 
 Derived notions proven from position-binding (+ perfect completeness), used
 by the code-binding proof (`Assumptions/VectorCommitment.lean`):
