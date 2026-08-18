@@ -2,7 +2,7 @@
 
 Proving security of the PQ DAS scheme from [this post](https://ethresear.ch/t/leanda-design-and-benchmark/25642) in Lean4. Code comments and README refer to the [Foundations paper](https://eprint.iacr.org/2023/1079.pdf) from time to time.
 
-More details and explanation can be found here: TBD
+More details and explanation can be found [here](https://ethresear.ch/t/formally-verified-security-for-pq-das-leanda/25746).
 
 *Disclaimer.* The lean code here proves statements about an abstract scheme, under assumptions about abstract building blocks. In particular, it does not prove security of any production implementation and can never replace proper audit of future implementations.
 
