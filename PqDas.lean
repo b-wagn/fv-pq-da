@@ -6,6 +6,7 @@ import PqDas.RomRuntime
 import PqDas.VcvioExtras
 import PqDas.Target.ErasureCodeCommitment
 import PqDas.Target.Scheme
+import PqDas.Target.TightScheme
 import PqDas.Proof.CommittedSoundness.Defs
 import PqDas.Proof.CommittedSoundness.Fork
 import PqDas.Proof.CommittedSoundness.Bridge
@@ -15,3 +16,6 @@ import PqDas.Proof.CommittedSoundness.ForkingBound
 import PqDas.Proof.PositionBinding
 import PqDas.Proof.CodeBinding
 import PqDas.Proof.CorollaryCodeBinding
+import PqDas.ProofTight.SparseRelation
+import PqDas.ProofTight.PositionBinding
+import PqDas.ProofTight.CodeBinding

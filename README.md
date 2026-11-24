@@ -9,14 +9,9 @@ More details and explanation can be found [here](https://ethresear.ch/t/formally
 ## Building
 
 ```
-lake build                              # everything (first build downloads the mathlib cache)
-lake build PqDas.AxiomCheck             # re-run the axiom audit
-lake build PqDas.ProofTight.AxiomCheck  # build and audit the tight variant (see below)
+lake build                    # everything (first build downloads the mathlib cache)
+lake build PqDas.AxiomCheck   # re-run the axiom audit
 ```
-
-The tight variant (`Target/TightScheme.lean`, `ProofTight/`) is not imported by
-the root module `PqDas.lean`, so plain `lake build` does not compile it; the
-third command does.
 
 Toolchain: Lean `v4.32.2`, mathlib `v4.32.2`, VCVio pinned in
 `lake-manifest.json`.
@@ -131,8 +126,7 @@ is hashed; this is not covered here.
 
 
 ## Axioms
-To check which axioms are used, run `lake lean PqDas/AxiomCheck.lean`
-(and `lake lean PqDas/ProofTight/AxiomCheck.lean` for the tight variant).
+To check which axioms are used, run `lake lean PqDas/AxiomCheck.lean`.
 
 Current output:
 
@@ -143,11 +137,6 @@ Current output:
 'PqDas.scheme_perfectlyComplete'                                  : [propext, Classical.choice, Quot.sound]
 'PqDas.scheme_codeBinding_concrete'                               : [propext, Classical.choice, Quot.sound]
 'PqDas.scheme_codeBinding_concrete_posBinding'                    : [propext, Classical.choice, Quot.sound]
-```
-
-Tight variant:
-
-```
 'PqDas.tightScheme_perfectlyComplete'                             : [propext, Classical.choice, Quot.sound]
 'PqDas.tightScheme_positionBinding'                               : [propext, Classical.choice, Quot.sound]
 'PqDas.SparseRelation.probOutput_challenge_le'                    : [propext, Classical.choice, Quot.sound]
