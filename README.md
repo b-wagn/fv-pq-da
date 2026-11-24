@@ -9,9 +9,14 @@ More details and explanation can be found [here](https://ethresear.ch/t/formally
 ## Building
 
 ```
-lake build                    # everything (first build downloads the mathlib cache)
-lake build PqDas.AxiomCheck   # re-run the axiom audit
+lake build                              # everything (first build downloads the mathlib cache)
+lake build PqDas.AxiomCheck             # re-run the axiom audit
+lake build PqDas.ProofTight.AxiomCheck  # build and audit the tight variant (see below)
 ```
+
+The tight variant (`Target/TightScheme.lean`, `ProofTight/`) is not imported by
+the root module `PqDas.lean`, so plain `lake build` does not compile it; the
+third command does.
 
 Toolchain: Lean `v4.32.2`, mathlib `v4.32.2`, VCVio pinned in
 `lake-manifest.json`.
@@ -68,8 +73,66 @@ can be checked by *human* inspection.
 | `WeakPosBindingAdv.toPosBindingAdv`, `CollisionAdv.toPosBindingAdv` | VC position-binding | weak-PB / collision adversaries | `Assumptions/VectorCommitment.lean` |
 
 
+## A variant with a tight code-binding proof
+
+The code-binding bound above loses a square root and a factor `Q`, because the
+only argument of knowledge is produced after the check randomness is known and
+the proof has to rewind. `Target/TightScheme.lean` defines a variant in which
+the committer proves knowledge of the committed vector *before* the check
+randomness exists, and that proof is hashed:
+
+* `comVC := vc.commit ckVC c`, as before;
+* `π₀` proves knowledge of a `c` committing to `comVC` (relation `commitRel`);
+* `l := H(comVC, π₀)`;
+* `π₁` proves knowledge of a `c` committing to `comVC` and passing
+  `chk.check l c` (relation `schemeRel`, unchanged);
+* the commitment is `(comVC, π₀, π₁)`; verification recomputes `l` and checks
+  both proofs and the opening.
+
+The vector extracted from `π₀` is a function of the keys and the oracle input
+`(comVC, π₀)`, hence fixed before `l` is sampled, and no rewinding is needed.
+The cost is a second proof: both `π₀` and `π₁` prove a statement about the
+vector commitment.
+
+Additional building block: a second argument of knowledge, for `commitRel`
+(same `Nark` interface, own reference string and extractor). All other
+building blocks, definitions and security notions are reused unchanged.
+
+| Theorem | Statement (informal) | File |
+|---|---|---|
+| `tightScheme_perfectlyComplete` | the tight scheme is a perfectly complete erasure code commitment | `Target/TightScheme.lean` |
+| `tightScheme_positionBinding` | `Pr[pos-bind] ≤ ε_pb(VC)` | `ProofTight/PositionBinding.lean` |
+| `SparseRelation.probOutput_challenge_le` | a `Q`-query adversary finds `x` with `R x (H x)` with probability `≤ (Q+1)·δ`, for any `δ`-sparse relation `R` | `ProofTight/SparseRelation.lean` |
+| `tightScheme_codeBinding` | `Pr[code-bind] ≤ ε_ks₀ + ε_ks₁ + ε_coll + ε_wpb + (Q+1)·δ` | `ProofTight/CodeBinding.lean` |
+| `tightScheme_codeBinding_posBinding` | as above with `ε_coll`, `ε_wpb` replaced by position-binding of the VC (assuming the VC is perfectly complete) | `ProofTight/CodeBinding.lean` |
+
+| Reduction | Breaks | From | File |
+|---|---|---|---|
+| `tightPosBindingReduction` | VC position-binding | tight-scheme position-binding adversary | `ProofTight/PositionBinding.lean` |
+| `tightKs₀Reduction` | knowledge soundness of the first argument | code-binding adversary | `ProofTight/CodeBinding.lean` |
+| `tightKs₁Reduction` | knowledge soundness of the second argument | code-binding adversary | `ProofTight/CodeBinding.lean` |
+| `tightCollReduction` | VC commit collision | code-binding adversary (no rewinding) | `ProofTight/CodeBinding.lean` |
+| `tightWpbReduction` | VC weak position-binding | code-binding adversary | `ProofTight/CodeBinding.lean` |
+
+The term `(Q+1)·δ` has no reduction attached; it is a union bound over the
+random-oracle queries, using soundness of the code checker.
+
+The two code-binding theorems assume that the checker is `δ`-sound, that the
+adversary makes at most `Q` random-oracle queries for every key, and (as for
+the original scheme) `Nonempty Γ`, `NeZero n` and `Inhabited Opn`.
+`tightCollReduction` and `tightWpbReduction` call the extractors, so they are
+efficient only if the extractors are.
+
+*Caveat.* The tightness relies on the modeling of knowledge soundness in
+`Assumptions/Nark.lean`: the extractor is a function of `(crs, stmt, π)` alone.
+For an argument system whose extractor additionally reads the prover's
+random-oracle queries, the vector must be extractable at the time `(comVC, π₀)`
+is hashed; this is not covered here.
+
+
 ## Axioms
-To check which axioms are used, run `lake lean PqDas/AxiomCheck.lean`.
+To check which axioms are used, run `lake lean PqDas/AxiomCheck.lean`
+(and `lake lean PqDas/ProofTight/AxiomCheck.lean` for the tight variant).
 
 Current output:
 
@@ -80,6 +143,16 @@ Current output:
 'PqDas.scheme_perfectlyComplete'                                  : [propext, Classical.choice, Quot.sound]
 'PqDas.scheme_codeBinding_concrete'                               : [propext, Classical.choice, Quot.sound]
 'PqDas.scheme_codeBinding_concrete_posBinding'                    : [propext, Classical.choice, Quot.sound]
+```
+
+Tight variant:
+
+```
+'PqDas.tightScheme_perfectlyComplete'                             : [propext, Classical.choice, Quot.sound]
+'PqDas.tightScheme_positionBinding'                               : [propext, Classical.choice, Quot.sound]
+'PqDas.SparseRelation.probOutput_challenge_le'                    : [propext, Classical.choice, Quot.sound]
+'PqDas.tightScheme_codeBinding'                                   : [propext, Classical.choice, Quot.sound]
+'PqDas.tightScheme_codeBinding_posBinding'                        : [propext, Classical.choice, Quot.sound]
 ```
 
 There are no `sorry`s and no custom axioms anywhere in the project.
